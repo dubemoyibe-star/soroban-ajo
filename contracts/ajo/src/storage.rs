@@ -1,5 +1,7 @@
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
+use crate::types::{GroupInvitation, JoinRequest};
+
 /// Logical storage key categories used by the Ajo contract.
 ///
 /// Soroban storage uses raw key values; this enum documents the naming
@@ -32,6 +34,42 @@ pub enum StorageKey {
     /// Optional metadata for a group.
     /// Stored in persistent storage under `("METADATA", group_id)`.
     GroupMetadata(u64),
+
+    /// Contribution record with penalty information.
+    /// Stored in persistent storage under `("CONTREC", group_id, cycle, member)`.
+    ContributionDetail(u64, u32, Address),
+
+    /// Member penalty statistics for a group.
+    /// Stored in persistent storage under `("PENALTY", group_id, member)`.
+    MemberPenalty(u64, Address),
+
+    /// Penalty pool for current cycle.
+    /// Stored in persistent storage under `("PENPOOL", group_id, cycle)`.
+    CyclePenaltyPool(u64, u32),
+
+    /// Insurance pool for a specific token.
+    /// Stored in instance storage under `("INSPOOL", token_address)`.
+    InsurancePool(Address),
+
+    /// Insurance claim keyed by ID.
+    /// Stored in persistent storage under `("INSCLAIM", claim_id)`.
+    InsuranceClaim(u64),
+
+    /// Global insurance claim counter.
+    /// Stored in instance storage under `"ICONT"`.
+    ClaimCounter,
+
+    /// Group milestones list.
+    /// Stored in persistent storage under `("GMILE", group_id)`.
+    GroupMilestones(u64),
+
+    /// Member achievements list.
+    /// Stored in persistent storage under `("MACHIEV", member)`.
+    MemberAchievements(Address),
+
+    /// Aggregated member statistics.
+    /// Stored in persistent storage under `("MSTATS", member)`.
+    MemberStatsData(Address),
 }
 
 impl StorageKey {
@@ -42,7 +80,7 @@ impl StorageKey {
     /// in a tuple at the storage call site; this method returns only the symbol portion.
     ///
     /// # Arguments
-    /// * `env` - The contract environment (needed for symbol creation)
+    /// * `_env` - The contract environment (reserved for future use)
     ///
     /// # Returns
     /// The [`Symbol`] corresponding to this key variant's prefix
@@ -54,6 +92,15 @@ impl StorageKey {
             StorageKey::Contribution(_, _, _) => symbol_short!("CONTRIB"),
             StorageKey::PayoutReceived(_, _) => symbol_short!("PAYOUT"),
             StorageKey::GroupMetadata(_) => symbol_short!("METADATA"),
+            StorageKey::ContributionDetail(_, _, _) => symbol_short!("CONTREC"),
+            StorageKey::MemberPenalty(_, _) => symbol_short!("PENALTY"),
+            StorageKey::CyclePenaltyPool(_, _) => symbol_short!("PENPOOL"),
+            StorageKey::InsurancePool(_) => symbol_short!("INSPOOL"),
+            StorageKey::InsuranceClaim(_) => symbol_short!("INSCLAIM"),
+            StorageKey::ClaimCounter => symbol_short!("ICONT"),
+            StorageKey::GroupMilestones(_) => symbol_short!("GMILE"),
+            StorageKey::MemberAchievements(_) => symbol_short!("MACHIEV"),
+            StorageKey::MemberStatsData(_) => symbol_short!("MSTATS"),
         }
     }
 }
@@ -170,22 +217,6 @@ pub fn mark_payout_received(env: &Env, group_id: u64, member: &Address) {
     env.storage().persistent().set(&key, &true);
 }
 
-/// Returns `true` if the given member has already received a payout for this group.
-///
-/// Defaults to `false` if no record exists, meaning the member has not yet received a payout.
-///
-/// # Arguments
-/// * `env` - The contract environment used to access persistent storage
-/// * `group_id` - The group to check
-/// * `member` - The member address to check
-///
-/// # Returns
-/// `true` if the member has received a payout, `false` otherwise
-pub fn has_received_payout(env: &Env, group_id: u64, member: &Address) -> bool {
-    let key = (symbol_short!("PAYOUT"), group_id, member);
-    env.storage().persistent().get(&key).unwrap_or(false)
-}
-
 /// Returns contribution status for every member in a cycle as an ordered vector.
 ///
 /// Iterates through `members` in order and looks up each one's contribution
@@ -206,7 +237,9 @@ pub fn get_cycle_contributions(
     cycle: u32,
     members: &Vec<Address>,
 ) -> Vec<(Address, bool)> {
+    let _capacity = members.len() as u32;
     let mut results = Vec::new(env);
+
     for member in members.iter() {
         let paid = has_contributed(env, group_id, cycle, &member);
         results.push_back((member, paid));
@@ -278,4 +311,392 @@ pub fn get_group_metadata(env: &Env, group_id: u64) -> Option<crate::types::Grou
 pub fn has_group_metadata(env: &Env, group_id: u64) -> bool {
     let key = (symbol_short!("METADATA"), group_id);
     env.storage().persistent().has(&key)
+}
+
+/// Stores detailed contribution record with penalty information.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `group_id` - The group the contribution belongs to
+/// * `cycle` - The cycle number
+/// * `member` - The contributing member's address
+/// * `record` - The contribution record with penalty details
+pub fn store_contribution_detail(
+    env: &Env,
+    group_id: u64,
+    cycle: u32,
+    member: &Address,
+    record: &crate::types::ContributionRecord,
+) {
+    let key = (symbol_short!("CONTREC"), group_id, cycle, member);
+    env.storage().persistent().set(&key, record);
+}
+
+/// Retrieves detailed contribution record.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `group_id` - The group to check
+/// * `cycle` - The cycle number
+/// * `member` - The member address
+///
+/// # Returns
+/// `Some(ContributionRecord)` if exists, `None` otherwise
+pub fn get_contribution_detail(
+    env: &Env,
+    group_id: u64,
+    cycle: u32,
+    member: &Address,
+) -> Option<crate::types::ContributionRecord> {
+    let key = (symbol_short!("CONTREC"), group_id, cycle, member);
+    env.storage().persistent().get(&key)
+}
+
+/// Stores or updates member penalty statistics.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `group_id` - The group the member belongs to
+/// * `member` - The member's address
+/// * `record` - The penalty record
+pub fn store_member_penalty(
+    env: &Env,
+    group_id: u64,
+    member: &Address,
+    record: &crate::types::MemberPenaltyRecord,
+) {
+    let key = (symbol_short!("PENALTY"), group_id, member);
+    env.storage().persistent().set(&key, record);
+}
+
+/// Retrieves member penalty statistics.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `group_id` - The group to check
+/// * `member` - The member address
+///
+/// # Returns
+/// `Some(MemberPenaltyRecord)` if exists, `None` otherwise
+pub fn get_member_penalty(
+    env: &Env,
+    group_id: u64,
+    member: &Address,
+) -> Option<crate::types::MemberPenaltyRecord> {
+    let key = (symbol_short!("PENALTY"), group_id, member);
+    env.storage().persistent().get(&key)
+}
+
+/// Stores the penalty pool for a cycle.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `group_id` - The group
+/// * `cycle` - The cycle number
+/// * `amount` - Total penalties collected in this cycle
+pub fn store_cycle_penalty_pool(env: &Env, group_id: u64, cycle: u32, amount: i128) {
+    let key = (symbol_short!("PENPOOL"), group_id, cycle);
+    env.storage().persistent().set(&key, &amount);
+}
+
+/// Retrieves the penalty pool for a cycle.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `group_id` - The group
+/// * `cycle` - The cycle number
+///
+/// # Returns
+/// Total penalties collected, defaults to 0 if not set
+pub fn get_cycle_penalty_pool(env: &Env, group_id: u64, cycle: u32) -> i128 {
+    let key = (symbol_short!("PENPOOL"), group_id, cycle);
+    env.storage().persistent().get(&key).unwrap_or(0)
+}
+
+/// Adds a penalty amount to the cycle's penalty pool.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `group_id` - The group
+/// * `cycle` - The cycle number
+/// * `penalty` - Penalty amount to add
+pub fn add_to_penalty_pool(env: &Env, group_id: u64, cycle: u32, penalty: i128) {
+    let current = get_cycle_penalty_pool(env, group_id, cycle);
+    store_cycle_penalty_pool(env, group_id, cycle, current + penalty);
+}
+
+/// Stores a refund request for a group.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `group_id` - The group the refund request is for
+/// * `request` - The refund request data
+pub fn store_refund_request(env: &Env, group_id: u64, request: &crate::types::RefundRequest) {
+    let key = (symbol_short!("REFREQ"), group_id);
+    env.storage().persistent().set(&key, request);
+}
+
+/// Retrieves a refund request for a group.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `group_id` - The group to check
+///
+/// # Returns
+/// `Some(RefundRequest)` if exists, `None` otherwise
+pub fn get_refund_request(env: &Env, group_id: u64) -> Option<crate::types::RefundRequest> {
+    let key = (symbol_short!("REFREQ"), group_id);
+    env.storage().persistent().get(&key)
+}
+
+/// Checks if a refund request exists for a group.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `group_id` - The group to check
+///
+/// # Returns
+/// `true` if a refund request exists, `false` otherwise
+pub fn has_refund_request(env: &Env, group_id: u64) -> bool {
+    let key = (symbol_short!("REFREQ"), group_id);
+    env.storage().persistent().has(&key)
+}
+
+/// Removes a refund request from storage.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `group_id` - The group to remove the request for
+pub fn remove_refund_request(env: &Env, group_id: u64) {
+    let key = (symbol_short!("REFREQ"), group_id);
+    env.storage().persistent().remove(&key);
+}
+
+/// Stores a member's vote on a refund request.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `group_id` - The group
+/// * `member` - The voting member's address
+/// * `vote` - The vote record
+pub fn store_refund_vote(
+    env: &Env,
+    group_id: u64,
+    member: &Address,
+    vote: &crate::types::RefundVote,
+) {
+    let key = (symbol_short!("REFVOTE"), group_id, member);
+    env.storage().persistent().set(&key, vote);
+}
+
+/// Retrieves a member's vote on a refund request.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `group_id` - The group
+/// * `member` - The member's address
+///
+/// # Returns
+/// `Some(RefundVote)` if the member has voted, `None` otherwise
+pub fn get_refund_vote(env: &Env, group_id: u64, member: &Address) -> Option<crate::types::RefundVote> {
+    let key = (symbol_short!("REFVOTE"), group_id, member);
+    env.storage().persistent().get(&key)
+}
+
+/// Checks if a member has voted on a refund request.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `group_id` - The group
+/// * `member` - The member's address
+///
+/// # Returns
+/// `true` if the member has voted, `false` otherwise
+pub fn has_voted(env: &Env, group_id: u64, member: &Address) -> bool {
+    let key = (symbol_short!("REFVOTE"), group_id, member);
+    env.storage().persistent().has(&key)
+}
+
+/// Stores a refund record.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `group_id` - The group
+/// * `member` - The member receiving the refund
+/// * `record` - The refund record
+pub fn store_refund_record(
+    env: &Env,
+    group_id: u64,
+    member: &Address,
+    record: &crate::types::RefundRecord,
+) {
+    let key = (symbol_short!("REFUND"), group_id, member);
+    env.storage().persistent().set(&key, record);
+}
+
+/// Retrieves a refund record for a member.
+///
+/// # Arguments
+/// * `env` - The contract environment
+/// * `group_id` - The group
+/// * `member` - The member's address
+///
+/// # Returns
+/// `Some(RefundRecord)` if exists, `None` otherwise
+pub fn get_refund_record(
+    env: &Env,
+    group_id: u64,
+    member: &Address,
+) -> Option<crate::types::RefundRecord> {
+    let key = (symbol_short!("REFUND"), group_id, member);
+    env.storage().persistent().get(&key)
+}
+
+/// Stores the insurance pool for a token.
+pub fn store_insurance_pool(env: &Env, token: &Address, pool: &crate::types::InsurancePool) {
+    let key = (symbol_short!("INSPOOL"), token);
+    env.storage().instance().set(&key, pool);
+}
+
+/// Retrieves the insurance pool for a token.
+pub fn get_insurance_pool(env: &Env, token: &Address) -> Option<crate::types::InsurancePool> {
+    let key = (symbol_short!("INSPOOL"), token);
+    env.storage().instance().get(&key)
+}
+
+/// Returns next available claim ID.
+pub fn get_next_claim_id(env: &Env) -> u64 {
+    let key = symbol_short!("ICONT");
+    let current: u64 = env.storage().instance().get(&key).unwrap_or(0);
+    let next = current + 1;
+    env.storage().instance().set(&key, &next);
+    next
+}
+
+/// Stores an insurance claim.
+pub fn store_insurance_claim(env: &Env, claim_id: u64, claim: &crate::types::InsuranceClaim) {
+    let key = (symbol_short!("INSCLAIM"), claim_id);
+    env.storage().persistent().set(&key, claim);
+}
+
+/// Retrieves an insurance claim.
+pub fn get_insurance_claim(env: &Env, claim_id: u64) -> Option<crate::types::InsuranceClaim> {
+    let key = (symbol_short!("INSCLAIM"), claim_id);
+    env.storage().persistent().get(&key)
+}
+
+// ── Payout-ordering helpers ───────────────────────────────────────────────────
+
+/// Returns `true` if the given member has already received their payout for a group.
+///
+/// This is the read-side counterpart of [`mark_payout_received`].
+pub fn has_received_payout(env: &Env, group_id: u64, member: &Address) -> bool {
+    let key = (symbol_short!("PAYOUT"), group_id, member);
+    env.storage().persistent().get(&key).unwrap_or(false)
+}
+
+/// Stores a payout vote cast by `voter` for `nominee` in `cycle`.
+///
+/// Keyed per voter so each member can cast at most one vote per cycle.
+pub fn store_payout_vote(
+    env: &Env,
+    group_id: u64,
+    cycle: u32,
+    voter: &Address,
+    vote: &crate::types::PayoutVote,
+) {
+    let key = (symbol_short!("PVOTE"), group_id, cycle, voter);
+    env.storage().persistent().set(&key, vote);
+}
+
+/// Retrieves the payout vote cast by `voter` for `cycle`, if any.
+pub fn get_payout_vote(
+    env: &Env,
+    group_id: u64,
+    cycle: u32,
+    voter: &Address,
+) -> Option<crate::types::PayoutVote> {
+    let key = (symbol_short!("PVOTE"), group_id, cycle, voter);
+    env.storage().persistent().get(&key)
+}
+
+/// Returns `true` if `voter` has already submitted a payout vote for `cycle`.
+pub fn has_voted_for_payout(env: &Env, group_id: u64, cycle: u32, voter: &Address) -> bool {
+    let key = (symbol_short!("PVOTE"), group_id, cycle, voter);
+    env.storage().persistent().has(&key)
+}
+
+/// Persists the determined [`PayoutOrder`](crate::types::PayoutOrder) for a cycle.
+pub fn store_payout_order(
+    env: &Env,
+    group_id: u64,
+    cycle: u32,
+    order: &crate::types::PayoutOrder,
+) {
+    let key = (symbol_short!("PORDER"), group_id, cycle);
+    env.storage().persistent().set(&key, order);
+}
+
+/// Retrieves the committed payout order for a cycle, if one has been recorded.
+pub fn get_payout_order(
+    env: &Env,
+    group_id: u64,
+    cycle: u32,
+) -> Option<crate::types::PayoutOrder> {
+    let key = (symbol_short!("PORDER"), group_id, cycle);
+    env.storage().persistent().get(&key)
+}
+
+// ── Milestone & achievement storage ───────────────────────────────────────
+
+/// Stores group milestones list.
+pub fn store_group_milestones(env: &Env, group_id: u64, milestones: &Vec<crate::types::MilestoneRecord>) {
+    let key = (symbol_short!("GMILE"), group_id);
+    env.storage().persistent().set(&key, milestones);
+}
+
+/// Retrieves group milestones.
+pub fn get_group_milestones(env: &Env, group_id: u64) -> Option<Vec<crate::types::MilestoneRecord>> {
+    let key = (symbol_short!("GMILE"), group_id);
+    env.storage().persistent().get(&key)
+}
+
+/// Adds a single milestone to a group's milestone list.
+pub fn add_group_milestone(env: &Env, group_id: u64, record: &crate::types::MilestoneRecord) {
+    let mut milestones = get_group_milestones(env, group_id)
+        .unwrap_or_else(|| Vec::new(env));
+    milestones.push_back(record.clone());
+    store_group_milestones(env, group_id, &milestones);
+}
+
+/// Stores member achievements list.
+pub fn store_member_achievements(env: &Env, member: &Address, achievements: &Vec<crate::types::AchievementRecord>) {
+    let key = (symbol_short!("MACHIEV"), member);
+    env.storage().persistent().set(&key, achievements);
+}
+
+/// Retrieves member achievements.
+pub fn get_member_achievements(env: &Env, member: &Address) -> Option<Vec<crate::types::AchievementRecord>> {
+    let key = (symbol_short!("MACHIEV"), member);
+    env.storage().persistent().get(&key)
+}
+
+/// Adds a single achievement to a member's list.
+pub fn add_member_achievement(env: &Env, member: &Address, record: &crate::types::AchievementRecord) {
+    let mut achievements = get_member_achievements(env, member)
+        .unwrap_or_else(|| Vec::new(env));
+    achievements.push_back(record.clone());
+    store_member_achievements(env, member, &achievements);
+}
+
+/// Stores aggregated member statistics.
+pub fn store_member_stats(env: &Env, member: &Address, stats: &crate::types::MemberStats) {
+    let key = (symbol_short!("MSTATS"), member);
+    env.storage().persistent().set(&key, stats);
+}
+
+/// Retrieves aggregated member statistics.
+pub fn get_member_stats(env: &Env, member: &Address) -> Option<crate::types::MemberStats> {
+    let key = (symbol_short!("MSTATS"), member);
+    env.storage().persistent().get(&key)
 }

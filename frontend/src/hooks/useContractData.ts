@@ -29,6 +29,7 @@ export const QUERY_KEYS = {
   GROUPS: ['groups'] as const,
   USER_GROUPS: (userId: string) => ['groups', userId] as const,
   GROUP_DETAIL: (groupId: string) => ['group', groupId] as const,
+  GROUP_STATUS: (groupId: string) => ['groupStatus', groupId] as const,
   GROUP_MEMBERS: (groupId: string) => ['groupMembers', groupId] as const,
   USER_CONTRIBUTIONS: ['user_contributions'] as const,
   TRANSACTIONS: (groupId: string) => ['transactions', groupId] as const,
@@ -152,6 +153,35 @@ export const useGroupMembers = (groupId: string, options: CacheOptions = {}) => 
 }
 
 /**
+ * Fetch group status with real-time blockchain data and caching.
+ * Returns current cycle info, contribution status, and payout schedule.
+ */
+export const useGroupStatus = (groupId: string, options: CacheOptions = {}) => {
+  const { useCache = true, bustCache = false } = options
+  const queryKey = useMemo(() => QUERY_KEYS.GROUP_STATUS(groupId), [groupId])
+
+  return useQuery({
+    queryKey,
+    queryFn: async () => {
+      if (bustCache) {
+        cacheService.invalidate(CacheKeys.groupStatus(groupId))
+      }
+      try {
+        return await analytics.measureAsync('query_group_status', () =>
+          sorobanService.getGroupStatus(groupId, useCache)
+        )
+      } catch (error) {
+        analytics.trackError(error as Error, { operation: 'useGroupStatus', groupId }, 'medium')
+        throw error
+      }
+    },
+    ...DEFAULT_QUERY_OPTIONS,
+    staleTime: 30 * 1000, // 30 seconds - status changes frequently
+    enabled: !!groupId,
+  })
+}
+
+/**
  * Fetch transaction history for a group with pagination
  */
 export const useTransactions = (
@@ -263,11 +293,18 @@ interface JoinGroupResult {
 /**
  * Join group mutation with cache invalidation
  */
-export const useJoinGroup = () => {
+export const useJoinGroup = (userId?: string) => {
   const queryClient = useQueryClient()
 
   return useMutation<JoinGroupResult, Error, string>({
     mutationFn: async (groupId: string) => {
+      // Validate local cache first if userId is present
+      if (userId) {
+        const userGroups = queryClient.getQueryData<Group[]>(QUERY_KEYS.USER_GROUPS(userId));
+        if (userGroups?.some((g) => g.id === groupId)) {
+          throw new Error('You are already a member of this group.');
+        }
+      }
       await sorobanService.joinGroup(groupId)
       return { groupId }
     },
@@ -278,8 +315,12 @@ export const useJoinGroup = () => {
       showNotification.success('Joined group successfully!')
       // Invalidate group-specific queries
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.GROUP_DETAIL(_data.groupId) })
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.GROUP_STATUS(_data.groupId) })
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.GROUP_MEMBERS(_data.groupId) })
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.GROUPS })
+      if (userId) {
+        queryClient.invalidateQueries({ queryKey: QUERY_KEYS.USER_GROUPS(userId) })
+      }
 
       // Invalidate custom cache
       sorobanService.invalidateGroupCache(_data.groupId)
@@ -339,6 +380,7 @@ export const useContribute = () => {
       showNotification.success(`Successfully contributed $${data.amount}!`)
       // Invalidate group and contributions
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.GROUP_DETAIL(data.groupId) })
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.GROUP_STATUS(data.groupId) })
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.GROUP_MEMBERS(data.groupId) })
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.USER_CONTRIBUTIONS })
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.TRANSACTIONS(data.groupId) })
@@ -375,6 +417,7 @@ export const useCacheInvalidation = () => {
   const invalidateGroup = useCallback(
     (groupId: string) => {
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.GROUP_DETAIL(groupId) })
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.GROUP_STATUS(groupId) })
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.GROUP_MEMBERS(groupId) })
       sorobanService.invalidateGroupCache(groupId)
     },
