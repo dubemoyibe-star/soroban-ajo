@@ -19,6 +19,7 @@ import { startJobProcessors } from './jobs'
 dotenv.config()
 
 const app = express()
+initSentry(app)
 const PORT = process.env.PORT || 3001
 
 // Middleware
@@ -51,6 +52,7 @@ app.use('/api/webhooks', strictLimiter, webhooksRouter)
 app.use('/jobs', jobsRouter)
 
 // Error handling
+Sentry.setupExpressErrorHandler(app)
 app.use(errorHandler)
 
 // Initialize queues and workers
