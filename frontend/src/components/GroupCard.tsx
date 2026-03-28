@@ -51,12 +51,12 @@ export const GroupCard: React.FC<GroupCardProps> = ({
   }
 
   const cardVariants = {
-    default: 'card-default',
-    elevated: 'card-elevated',
-    outlined: 'card-outlined',
-    interactive: 'card-interactive',
-    compact: 'card-compact',
-    spacious: 'card-spacious',
+    default: 'glass-card p-5',
+    elevated: 'glass-card glass-card-elevated p-6',
+    outlined: 'glass-card border-2 p-5',
+    interactive: 'glass-card glass-card-interactive p-5',
+    compact: 'glass-card glass-card-interactive p-4',
+    spacious: 'glass-card glass-card-elevated p-8',
   }
 
   const cardClass = cardVariants[variant]
@@ -68,40 +68,35 @@ export const GroupCard: React.FC<GroupCardProps> = ({
   // --- SKELETON LOADING STATE ---
   if (isLoading) {
     return (
-      <div className={`${cardClass} pointer-events-none relative overflow-hidden`}>
+      <div className={`${cardClass} pointer-events-none relative overflow-hidden`} aria-busy="true" aria-label="Loading group">
         {/* Top Accent Bar Skeleton */}
-        <div className="absolute top-0 left-0 right-0 h-1 skeleton" />
+        <div className="absolute top-0 left-0 right-0 h-1 glass-skeleton" />
 
         {/* Header Skeleton */}
         <div className={`flex justify-between items-start ${isCompact ? 'mb-3' : 'mb-5'} pt-1`}>
-          <div className={`skeleton rounded-lg ${isCompact ? 'h-5 w-1/2' : isSpaciousOrElevated ? 'h-7 w-2/3' : 'h-6 w-1/2'}`} />
-          <div className="skeleton h-6 w-16 rounded-full" />
+          <div className={`glass-skeleton rounded-lg ${isCompact ? 'h-5 w-1/2' : isSpaciousOrElevated ? 'h-7 w-2/3' : 'h-6 w-1/2'}`} />
+          <div className="glass-skeleton h-6 w-16 rounded-full" />
         </div>
 
         {/* Body Skeleton */}
         <div className={`${isCompact ? 'space-y-3' : 'space-y-4'}`}>
           <div className="flex justify-between items-center">
-            <div className="skeleton h-3.5 w-14 rounded" />
-            <div className="skeleton h-3.5 w-10 rounded" />
+            <div className="glass-skeleton h-3.5 w-14 rounded" />
+            <div className="glass-skeleton h-3.5 w-10 rounded" />
           </div>
-
-          <div className="progress-bar">
-            <div className="skeleton h-full w-full rounded-full" />
-          </div>
-
+          <div className="h-2 rounded-full glass-skeleton" />
           <div className="flex justify-between items-center">
-            <div className="skeleton h-3.5 w-24 rounded" />
-            <div className="skeleton h-3.5 w-16 rounded" />
+            <div className="glass-skeleton h-3.5 w-24 rounded" />
+            <div className="glass-skeleton h-3.5 w-16 rounded" />
           </div>
-
           <div className="flex justify-between items-center">
-            <div className="skeleton h-3.5 w-20 rounded" />
-            <div className="skeleton h-3.5 w-24 rounded" />
+            <div className="glass-skeleton h-3.5 w-20 rounded" />
+            <div className="glass-skeleton h-3.5 w-24 rounded" />
           </div>
         </div>
 
         {/* Button Skeleton */}
-        <div className={`skeleton w-full rounded-xl ${isCompact ? 'mt-4 h-9' : 'mt-5 h-10'}`} />
+        <div className={`glass-skeleton w-full rounded-xl ${isCompact ? 'mt-4 h-9' : 'mt-5 h-10'}`} />
       </div>
     )
   }
@@ -111,8 +106,10 @@ export const GroupCard: React.FC<GroupCardProps> = ({
     <div
       className={`${cardClass} relative overflow-hidden group`}
       onClick={onClick}
+      role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : -1}
       onKeyDown={onClick ? (e) => e.key === 'Enter' && onClick() : undefined}
+      aria-label={onClick ? `View details for ${groupName}` : undefined}
     >
       {/* Top Accent Bar */}
       <div className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r ${config.accent} opacity-80 group-hover:opacity-100 transition-opacity duration-300`} />
